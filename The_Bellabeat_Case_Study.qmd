@@ -1,0 +1,495 @@
+---
+title: "Bellabeat Case Study: Smart Device Usage Trends and Marketing Implications"
+author: "Data Analysis Portfolio Project"
+date: today
+format:
+  html:
+    toc: true
+    code-fold: true
+    theme: cosmo
+  pdf:
+    toc: true
+execute:
+  echo: true
+  warning: false
+  message: false
+  
+---
+
+## Note
+
+This report was generated using AI under general human direction. The contents should be reviewed by a human analyst before being used as a final professional deliverable.
+
+The colors used in the visualizations are an illustrative placeholder palette, not an official Bellabeat brand color scheme.
+
+# Business task
+
+Bellabeat is a wellness technology company that manufactures smart devices such as the Leaf tracker, Time watch, and Spring water bottle, targeted at women, alongside a companion app that collects activity, sleep, and wellness data.
+
+The marketing team wants to better understand how consumers use non-Bellabeat smart devices so that these insights can inform Bellabeat's own product marketing.
+
+This analysis addresses three questions:
+
+1. What are some trends in smart device usage?
+2. How could these trends apply to Bellabeat customers?
+3. How could these trends help inform Bellabeat's marketing strategy?
+
+# Data sources
+
+This analysis uses the FitBit Fitness Tracker Data (Fitabase), a public dataset of personal fitness tracker data from 33 Fitbit users who consented to share their data, covering daily activity, hourly steps, and sleep for roughly one month in April-May 2016.
+
+## Load packages
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(janitor)
+```
+
+## Visualization theme
+
+```{r}
+bellabeat_teal <- "#1F9E96"
+bellabeat_teal_dark <- "#0F5C57"
+bellabeat_coral <- "#F2867D"
+
+theme_bellabeat <- function(...) {
+  theme_minimal(base_size = 13, ...) +
+    theme(
+      plot.title = element_text(face = "bold", color = bellabeat_teal_dark),
+      panel.grid.minor = element_blank()
+    )
+}
+```
+
+# Import the data
+
+> **Important:** Update `data_dir` if your Fitbit files are stored in a different folder.
+
+```{r}
+data_dir <- "C:/Users/grego/Documents/FitbitData/Fitabase Data 4.12.16-5.12.16"
+
+daily_activity <- read_csv(
+  file.path(data_dir, "dailyActivity_merged.csv"),
+  show_col_types = FALSE
+) %>%
+  clean_names()
+
+sleep_data <- read_csv(
+  file.path(data_dir, "sleepDay_merged.csv"),
+  show_col_types = FALSE
+) %>%
+  clean_names()
+
+hourly_steps <- read_csv(
+  file.path(data_dir, "hourlySteps_merged.csv"),
+  show_col_types = FALSE
+) %>%
+  clean_names()
+```
+
+# Data quality considerations
+
+Three important limitations should be considered before interpreting the results:
+
+- **Small sample:** only 33 users, self-selected to share their data through a survey panel (Amazon Mechanical Turk), rather than a representative sample of the general population or Bellabeat's target customers.
+- **Short time window:** approximately one month of data, so seasonal patterns cannot be assessed.
+- **Not Bellabeat users:** the data comes from Fitbit devices and is therefore an analog for smart-device behavior, not actual Bellabeat customer data.
+
+# Data cleaning and manipulation
+
+Column names are standardized to `snake_case` with `clean_names()`. Date/time fields are explicitly parsed.
+
+## Parse dates
+
+```{r}
+daily_activity <- daily_activity %>%
+  mutate(
+    activity_date = as.Date(activity_date, format = "%m/%d/%Y")
+  )
+
+sleep_data <- sleep_data %>%
+  mutate(
+    sleep_day = as.POSIXct(
+      sleep_day,
+      format = "%m/%d/%Y %I:%M:%S %p"
+    )
+  )
+
+hourly_steps <- hourly_steps %>%
+  mutate(
+    activity_hour = mdy_hms(activity_hour)
+  )
+```
+
+## Check missing values
+
+```{r}
+colSums(is.na(daily_activity))
+```
+
+```{r}
+colSums(is.na(sleep_data))
+```
+
+No missing values were found in the daily activity or sleep tables in the source analysis.
+
+## Create derived fields
+
+```{r}
+daily_activity <- daily_activity %>%
+  mutate(
+    day_of_week = weekdays(activity_date),
+    total_active_minutes =
+      very_active_minutes +
+      fairly_active_minutes +
+      lightly_active_minutes
+  )
+
+hourly_steps <- hourly_steps %>%
+  mutate(
+    hour = hour(activity_hour)
+  )
+```
+
+## Join activity and sleep data
+
+Activity and sleep records are joined by user ID and date to examine the relationship between daytime activity and sleep.
+
+```{r}
+sleep_data_daily <- sleep_data %>%
+  mutate(
+    activity_date = as.Date(sleep_day)
+  ) %>%
+  select(
+    id,
+    activity_date,
+    total_minutes_asleep,
+    total_time_in_bed
+  )
+
+activity_sleep <- daily_activity %>%
+  inner_join(
+    sleep_data_daily,
+    by = c("id", "activity_date")
+  )
+```
+
+# Analysis summary
+
+## Trend 1: Sedentary time dominates the day
+
+Calculate the amount of tracked time spent at each activity intensity.
+
+```{r}
+activity_breakdown <- daily_activity %>%
+  summarise(
+    `Very active` = sum(very_active_minutes),
+    `Fairly active` = sum(fairly_active_minutes),
+    `Lightly active` = sum(lightly_active_minutes),
+    Sedentary = sum(sedentary_minutes)
+  ) %>%
+  pivot_longer(
+    everything(),
+    names_to = "category",
+    values_to = "minutes"
+  ) %>%
+  mutate(
+    pct = minutes / sum(minutes) * 100,
+    category = factor(
+      category,
+      levels = c(
+        "Very active",
+        "Fairly active",
+        "Lightly active",
+        "Sedentary"
+      )
+    )
+  )
+```
+
+### Figure 1: Share of tracked time by activity intensity
+
+```{r}
+ggplot(
+  activity_breakdown,
+  aes(x = pct, y = fct_rev(category))
+) +
+  geom_col(fill = bellabeat_teal) +
+  labs(
+    x = "% of total tracked minutes",
+    y = NULL,
+    title = "Share of Tracked Time by Activity Intensity"
+  ) +
+  theme_bellabeat()
+```
+
+Across all users and days, 81.3% of tracked time was sedentary, versus a combined 2.8% in fairly or very active minutes.
+
+This suggests that sedentary behavior represents a substantial portion of tracked time, even among people who use fitness trackers.
+
+## Trend 2: Device engagement varies by feature
+
+Compare activity tracking with sleep tracking.
+
+```{r}
+usage_comparison <- tibble(
+  metric = c(
+    "Users logging any data",
+    "Total logged days",
+    "Avg. days logged per user"
+  ),
+  Activity = c(
+    n_distinct(daily_activity$id),
+    nrow(daily_activity),
+    round(
+      nrow(daily_activity) /
+        n_distinct(daily_activity$id),
+      1
+    )
+  ),
+  Sleep = c(
+    n_distinct(sleep_data$id),
+    nrow(sleep_data),
+    round(
+      nrow(sleep_data) /
+        n_distinct(sleep_data$id),
+      1
+    )
+  )
+)
+
+usage_comparison
+```
+
+### Figure 2: Average logging frequency
+
+```{r}
+usage_comparison %>%
+  filter(metric == "Avg. days logged per user") %>%
+  pivot_longer(
+    cols = c(Activity, Sleep),
+    names_to = "feature",
+    values_to = "avg_days"
+  ) %>%
+  ggplot(
+    aes(x = avg_days, y = feature)
+  ) +
+  geom_col(fill = bellabeat_teal) +
+  labs(
+    x = "Average days logged per user",
+    y = NULL,
+    title = "Average Logging Frequency: Activity vs. Sleep"
+  ) +
+  theme_bellabeat()
+```
+
+The source analysis reports:
+
+- 33 users logged activity data.
+- 24 users logged sleep data.
+- Activity had 940 logged days.
+- Sleep had 413 logged days.
+- Average activity logging was 28.5 days per user.
+- Average sleep logging was 17.2 days per user.
+
+This indicates an engagement gap between activity tracking and sleep tracking.
+
+## Trend 3: Steps and calories are strongly related
+
+### Figure 3: Steps vs. calories burned
+
+```{r}
+ggplot(
+  daily_activity,
+  aes(x = total_steps, y = calories)
+) +
+  geom_point(
+    alpha = 0.5,
+    color = bellabeat_teal
+  ) +
+  geom_smooth(
+    method = "lm",
+    color = bellabeat_coral
+  ) +
+  labs(
+    title = "Steps vs. Calories Burned",
+    x = "Total steps",
+    y = "Calories"
+  ) +
+  theme_bellabeat()
+```
+
+Daily step counts are positively associated with calories burned.
+
+### Figure 4: Average steps by hour
+
+```{r}
+hourly_steps %>%
+  group_by(hour) %>%
+  summarise(
+    avg_steps = mean(step_total),
+    .groups = "drop"
+  ) %>%
+  ggplot(
+    aes(x = hour, y = avg_steps)
+  ) +
+  geom_line(
+    color = bellabeat_teal_dark,
+    linewidth = 1
+  ) +
+  labs(
+    title = "Average Steps by Hour of Day",
+    x = "Hour",
+    y = "Average Steps"
+  ) +
+  theme_bellabeat()
+```
+
+Average steps show a daily rhythm:
+
+- Minimal activity overnight, approximately midnight through 5 AM.
+- Increasing activity through the morning.
+- Higher activity from midday into the early evening.
+- Peak activity in the late afternoon or early evening.
+
+The pattern is consistent with normal waking-hour activity rather than a single isolated commute-related spike.
+
+# Trend 4: Sleep duration and sedentary time
+
+Calculate average sleep, the percentage of nights below seven hours, and the correlation between sedentary minutes and sleep.
+
+```{r}
+sleep_summary <- activity_sleep %>%
+  summarise(
+    mean_sleep_hours =
+      mean(total_minutes_asleep) / 60,
+
+    pct_under_7h =
+      mean(total_minutes_asleep < 7 * 60) * 100,
+
+    cor_sedentary_sleep =
+      cor(
+        sedentary_minutes,
+        total_minutes_asleep
+      )
+  )
+
+sleep_summary
+```
+
+The source analysis reports:
+
+- Mean sleep duration: approximately 6.99 hours.
+- 44.1% of logged nights were below seven hours.
+- Correlation between sedentary minutes and sleep duration: approximately -0.599.
+
+## Figure 5: Distribution of nightly sleep duration
+
+```{r}
+ggplot(
+  activity_sleep,
+  aes(x = total_minutes_asleep / 60)
+) +
+  geom_histogram(
+    binwidth = 1,
+    fill = bellabeat_teal
+  ) +
+  geom_vline(
+    xintercept = 7,
+    linetype = "dashed",
+    color = bellabeat_coral
+  ) +
+  labs(
+    title = "Distribution of Nightly Sleep Duration",
+    x = "Hours asleep",
+    y = "Count of nights"
+  ) +
+  theme_bellabeat()
+```
+
+## Figure 6: Sedentary minutes vs. hours asleep
+
+```{r}
+ggplot(
+  activity_sleep,
+  aes(
+    x = sedentary_minutes,
+    y = total_minutes_asleep / 60
+  )
+) +
+  geom_point(
+    alpha = 0.5,
+    color = bellabeat_teal
+  ) +
+  geom_smooth(
+    method = "lm",
+    color = bellabeat_coral
+  ) +
+  labs(
+    title = "Sedentary Minutes vs. Hours Asleep",
+    x = "Sedentary Minutes (Daytime)",
+    y = "Hours Asleep"
+  ) +
+  theme_bellabeat()
+```
+
+On nights with logged sleep, average sleep duration was approximately seven hours, and 44.1% of nights were below seven hours.
+
+The negative correlation between sedentary daytime minutes and nightly sleep duration should be interpreted cautiously. It is an observed relationship in a small sample and does not establish causation in either direction.
+
+# Key findings
+
+1. Sedentary time represents the large majority of tracked time, at 81.3%.
+2. Activity tracking is used more consistently than sleep tracking.
+3. Steps and calories move together, while activity follows a clear waking-hours rhythm.
+4. Average nightly sleep is close to, but often below, seven hours.
+5. Sedentary time and sleep duration show a moderate negative correlation in this sample.
+
+# How these trends could apply to Bellabeat customers
+
+## Sedentary time as a core motivator
+
+Because sedentary time dominates tracked behavior, Bellabeat could consider reminders and gentle nudges designed around breaking up long sedentary periods, rather than focusing exclusively on increasing daily step counts.
+
+## Closing the sleep-engagement gap
+
+The difference between activity and sleep tracking suggests that sleep tracking may require additional onboarding, education, and engagement strategies.
+
+## Connecting activity and sleep
+
+The observed activity-sleep relationship provides a potential narrative for personalized wellness insights that connect daytime behavior with nighttime sleep patterns.
+
+## Timing engagement around natural rhythms
+
+Because activity is concentrated from midday through early evening, engagement messages could potentially be timed around late morning or early afternoon.
+
+# Top recommendations
+
+1. Design campaigns and in-app features around reducing sedentary time, not only increasing step counts.
+2. Invest in dedicated onboarding and marketing for sleep-tracking features.
+3. Use the activity-sleep relationship as a storytelling tool for personalized wellness insights.
+4. Treat all findings as directional rather than conclusive because the sample contains only 33 users, covers approximately one month, and does not represent Bellabeat customers.
+
+# Reproducibility checklist
+
+Before publishing this case study:
+
+- Confirm the three Fitbit CSV files exist in `data_dir`.
+- Run the setup and import chunks first.
+- Confirm `daily_activity`, `sleep_data`, and `hourly_steps` are created.
+- Review missing-value results.
+- Run the cleaning and joining chunks.
+- Render the complete Quarto document.
+- Review every visualization and numerical result.
+- Replace the illustrative color palette if Bellabeat brand guidelines are available.
+- Clearly identify this as Fitbit data rather than Bellabeat customer data.
+
+# Appendix: Figure captions
+
+- **Figure 1:** Share of tracked time by activity intensity.
+- **Figure 2:** Average logging frequency: activity vs. sleep.
+- **Figure 3:** Steps vs. calories burned.
+- **Figure 4:** Average steps by hour of day.
+- **Figure 5:** Distribution of nightly sleep duration.
+- **Figure 6:** Sedentary minutes vs. hours asleep.
